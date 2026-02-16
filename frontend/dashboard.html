@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudWatch Observatory</title>
+    <meta name="description" content="Real-time cloud service monitoring dashboard with anomaly detection">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        /* ── CSS Variables ─────────────────────── */
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --bg-card: #1a1f35;
+            --bg-card-hover: #222845;
+            --border: rgba(255, 255, 255, 0.06);
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-blue: #3b82f6;
+            --accent-cyan: #06b6d4;
+            --accent-green: #10b981;
+            --accent-yellow: #f59e0b;
+            --accent-red: #ef4444;
+            --accent-purple: #8b5cf6;
+            --gradient-primary: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            --gradient-green: linear-gradient(135deg, #10b981, #06b6d4);
+            --gradient-red: linear-gradient(135deg, #ef4444, #f59e0b);
+            --shadow-sm: 0 2px 8px rgba(0,0,0,0.3);
+            --shadow-lg: 0 8px 32px rgba(0,0,0,0.4);
+            --radius: 16px;
+            --radius-sm: 10px;
+            --transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* ── Reset & Base ──────────────────────── */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* ── Header ────────────────────────────── */
+        .header {
+            background: linear-gradient(180deg, rgba(17,24,39,0.95), rgba(10,14,26,0.9));
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .logo {
+            width: 40px; height: 40px;
+            background: var(--gradient-primary);
+            border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.3rem;
+            box-shadow: 0 4px 15px rgba(59,130,246,0.3);
+        }
+        .header h1 {
+            font-size: 1.35rem;
+            font-weight: 600;
+            background: var(--gradient-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .stat-pill {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 0.4rem 1rem;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .stat-pill .value { color: var(--text-primary); font-weight: 600; }
+        .btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 0.5rem 1.2rem;
+            border-radius: 10px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.85rem;
+            transition: var(--transition);
+        }
+        .btn:hover { background: var(--bg-card-hover); border-color: var(--accent-blue); }
+        .btn-primary {
+            background: var(--gradient-primary);
+            border: none;
+            font-weight: 500;
+        }
+        .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+
+        /* ── Tab Navigation ────────────────────── */
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            padding: 1rem 2rem 0;
+        }
+        .tab {
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-muted);
+            padding: 0.6rem 1.4rem;
+            border-radius: 10px 10px 0 0;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: var(--transition);
+        }
+        .tab:hover { color: var(--text-secondary); }
+        .tab.active {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border-color: var(--border);
+            border-bottom-color: var(--bg-secondary);
+        }
+
+        /* ── Main Content ──────────────────────── */
+        .main { padding: 0 2rem 2rem; }
+        .view { display: none; }
+        .view.active { display: block; }
+
+        /* ── Service Cards Grid ────────────────── */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+            gap: 1.5rem;
+            padding-top: 1.5rem;
+        }
+        .service-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            transition: var(--transition);
+            position: relative;
+            overflow: hidden;
+        }
+        .service-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: var(--gradient-primary);
+            opacity: 0;
+            transition: var(--transition);
+        }
+        .service-card:hover {
+            border-color: rgba(59,130,246,0.3);
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-lg);
+        }
+        .service-card:hover::before { opacity: 1; }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.2rem;
+        }
+        .card-header h3 { font-size: 1.05rem; font-weight: 600; }
+        .status-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .status-healthy { background: rgba(16,185,129,0.15); color: var(--accent-green); }
+        .status-degraded { background: rgba(245,158,11,0.15); color: var(--accent-yellow); }
+        .status-warning { background: rgba(245,158,11,0.25); color: var(--accent-yellow); }
+        .status-critical { background: rgba(239,68,68,0.15); color: var(--accent-red); }
+        .status-unknown { background: rgba(100,116,139,0.15); color: var(--text-muted); }
+
+        /* Health Ring */
+        .health-ring-container {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            margin-bottom: 1.2rem;
+        }
+        .health-ring {
+            width: 90px; height: 90px;
+            position: relative;
+            flex-shrink: 0;
+        }
+        .health-ring canvas { width: 90px !important; height: 90px !important; }
+        .health-ring .score {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.3rem;
+            font-weight: 700;
+        }
+
+        /* Metrics Grid */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.6rem;
+        }
+        .metric-item {
+            background: rgba(255,255,255,0.03);
+            border-radius: var(--radius-sm);
+            padding: 0.6rem 0.8rem;
+        }
+        .metric-item .label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .metric-item .value {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-top: 0.2rem;
+        }
+
+        /* Trend Chart */
+        .trend-chart {
+            margin-top: 1.2rem;
+            background: rgba(255,255,255,0.02);
+            border-radius: var(--radius-sm);
+            padding: 0.8rem;
+            height: 180px;
+        }
+        .trend-chart canvas { width: 100% !important; height: 100% !important; }
+
+        /* ── Anomaly Radar View ────────────────── */
+        .anomaly-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            padding-top: 1.5rem;
+        }
+        .anomaly-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1.2rem 1.5rem;
+            transition: var(--transition);
+            display: flex;
+            gap: 1.5rem;
+            align-items: flex-start;
+        }
+        .anomaly-item:hover {
+            border-color: rgba(239,68,68,0.3);
+            box-shadow: var(--shadow-sm);
+        }
+        .severity-dot {
+            width: 12px; height: 12px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            margin-top: 4px;
+        }
+        .severity-critical .severity-dot { background: var(--accent-red); box-shadow: 0 0 10px var(--accent-red); }
+        .severity-high .severity-dot { background: var(--accent-yellow); box-shadow: 0 0 10px var(--accent-yellow); }
+        .severity-medium .severity-dot { background: var(--accent-blue); }
+        .severity-low .severity-dot { background: var(--text-muted); }
+
+        .anomaly-content { flex: 1; }
+        .anomaly-header {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            margin-bottom: 0.4rem;
+        }
+        .anomaly-header h4 { font-size: 0.95rem; font-weight: 600; }
+        .severity-badge {
+            padding: 0.15rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.65rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .severity-critical .severity-badge { background: rgba(239,68,68,0.15); color: var(--accent-red); }
+        .severity-high .severity-badge { background: rgba(245,158,11,0.15); color: var(--accent-yellow); }
+        .severity-medium .severity-badge { background: rgba(59,130,246,0.15); color: var(--accent-blue); }
+        .severity-low .severity-badge { background: rgba(100,116,139,0.15); color: var(--text-muted); }
+
+        .anomaly-desc {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.5;
+            margin-bottom: 0.6rem;
+        }
+        .metric-tags {
+            display: flex;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.4rem;
+        }
+        .metric-tag {
+            background: rgba(139,92,246,0.12);
+            color: var(--accent-purple);
+            padding: 0.2rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            font-weight: 500;
+        }
+        .anomaly-meta {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* ── Empty State ───────────────────────── */
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: var(--text-muted);
+        }
+        .empty-state .icon { font-size: 3rem; margin-bottom: 1rem; }
+        .empty-state h3 { font-size: 1.1rem; color: var(--text-secondary); margin-bottom: 0.5rem; }
+
+        /* ── Loading ───────────────────────────── */
+        .spinner {
+            width: 40px; height: 40px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent-blue);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 3rem auto;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ── Responsive ────────────────────────── */
+        @media (max-width: 768px) {
+            .header { padding: 0.8rem 1rem; }
+            .main { padding: 0 1rem 1rem; }
+            .cards-grid { grid-template-columns: 1fr; }
+            .stat-pill { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ── Header ──────────────────────────── -->
+    <header class="header" id="header">
+        <div class="header-left">
+            <div class="logo">🔭</div>
+            <h1>CloudWatch Observatory</h1>
+        </div>
+        <div class="header-right">
+            <div class="stat-pill">
+                Services <span class="value" id="stat-services">0</span>
+            </div>
+            <div class="stat-pill">
+                Anomalies <span class="value" id="stat-anomalies">0</span>
+            </div>
+            <button class="btn btn-primary" id="btn-refresh" onclick="refreshAll()">⟳ Refresh</button>
+        </div>
+    </header>
+
+    <!-- ── Tab Navigation ──────────────────── -->
+    <nav class="tabs">
+        <button class="tab active" data-view="health" onclick="switchView('health', this)">
+            🩺 App Health
+        </button>
+        <button class="tab" data-view="anomalies" onclick="switchView('anomalies', this)">
+            📡 Anomaly Radar
+        </button>
+    </nav>
+
+    <!-- ── Main Content ────────────────────── -->
+    <main class="main">
+        <!-- App Health View -->
+        <section id="view-health" class="view active">
+            <div id="health-loading" class="spinner"></div>
+            <div id="health-cards" class="cards-grid" style="display:none;"></div>
+            <div id="health-empty" class="empty-state" style="display:none;">
+                <div class="icon">🏗️</div>
+                <h3>No services registered</h3>
+                <p>Register services via the API to start monitoring.</p>
+            </div>
+        </section>
+
+        <!-- Anomaly Radar View -->
+        <section id="view-anomalies" class="view">
+            <div id="anomaly-loading" class="spinner"></div>
+            <div id="anomaly-list" class="anomaly-list" style="display:none;"></div>
+            <div id="anomaly-empty" class="empty-state" style="display:none;">
+                <div class="icon">✅</div>
+                <h3>No anomalies detected</h3>
+                <p>All services are operating within normal parameters.</p>
+            </div>
+        </section>
+    </main>
+
+    <!-- ── JavaScript ──────────────────────── -->
+    <script>
+        // ── Config ─────────────────────────────
+        const API_BASE = 'http://localhost:5000/api';
+        const AUTO_REFRESH_INTERVAL = 30000; // 30s
+        let healthCharts = {};
+        let trendCharts = {};
+
+        // ── Tab Switching ──────────────────────
+        function switchView(viewId, tabEl) {
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.getElementById(`view-${viewId}`).classList.add('active');
+            tabEl.classList.add('active');
+        }
+
+        // ── Data Fetching ──────────────────────
+        async function fetchJSON(url) {
+            try {
+                const resp = await fetch(url);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                return await resp.json();
+            } catch (err) {
+                console.error(`Fetch error: ${url}`, err);
+                return null;
+            }
+        }
+
+        // ── Health View ────────────────────────
+        async function loadHealth() {
+            const summary = await fetchJSON(`${API_BASE}/health/summary`);
+            const loading = document.getElementById('health-loading');
+            const grid = document.getElementById('health-cards');
+            const empty = document.getElementById('health-empty');
+
+            loading.style.display = 'none';
+
+            if (!summary || summary.length === 0) {
+                grid.style.display = 'none';
+                empty.style.display = 'block';
+                return;
+            }
+
+            empty.style.display = 'none';
+            grid.style.display = 'grid';
+            grid.innerHTML = '';
+            document.getElementById('stat-services').textContent = summary.length;
+
+            for (const svc of summary) {
+                const card = createServiceCard(svc);
+                grid.appendChild(card);
+
+                // Load trend data
+                const history = await fetchJSON(
+                    `${API_BASE}/metrics/history?service=${encodeURIComponent(svc.service_name)}&hours=6`
+                );
+                if (history && history.length > 0) {
+                    renderHealthRing(svc.service_name, svc.score, svc.status);
+                    renderTrendChart(svc.service_name, history);
+                    updateMetricValues(svc.service_name, history[history.length - 1]);
+                }
+            }
+        }
+
+        function createServiceCard(svc) {
+            const card = document.createElement('div');
+            card.className = 'service-card';
+            card.innerHTML = `
+                <div class="card-header">
+                    <h3>${svc.service_name}</h3>
+                    <span class="status-badge status-${svc.status}">${svc.status}</span>
+                </div>
+                <div class="health-ring-container">
+                    <div class="health-ring">
+                        <canvas id="ring-${svc.service_name}"></canvas>
+                        <div class="score">${Math.round(svc.score)}</div>
+                    </div>
+                    <div class="metrics-grid">
+                        <div class="metric-item">
+                            <div class="label">Req/s</div>
+                            <div class="value mono" id="metric-rr-${svc.service_name}">—</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="label">Error %</div>
+                            <div class="value mono" id="metric-er-${svc.service_name}">—</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="label">P95 Lat</div>
+                            <div class="value mono" id="metric-lat-${svc.service_name}">—</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="label">CPU %</div>
+                            <div class="value mono" id="metric-cpu-${svc.service_name}">—</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="trend-chart">
+                    <canvas id="trend-${svc.service_name}"></canvas>
+                </div>
+            `;
+            return card;
+        }
+
+        function renderHealthRing(serviceName, score, status) {
+            const canvas = document.getElementById(`ring-${serviceName}`);
+            if (!canvas) return;
+
+            if (healthCharts[serviceName]) healthCharts[serviceName].destroy();
+
+            const colors = {
+                healthy: '#10b981',
+                degraded: '#f59e0b',
+                warning: '#f59e0b',
+                critical: '#ef4444',
+                unknown: '#64748b',
+            };
+            const color = colors[status] || colors.unknown;
+
+            healthCharts[serviceName] = new Chart(canvas, {
+                type: 'doughnut',
+                data: {
+                    datasets: [{
+                        data: [score, 100 - score],
+                        backgroundColor: [color, 'rgba(255,255,255,0.05)'],
+                        borderWidth: 0,
+                    }]
+                },
+                options: {
+                    cutout: '75%',
+                    responsive: false,
+                    plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                    animation: { animateRotate: true, duration: 1000 },
+                }
+            });
+        }
+
+        function renderTrendChart(serviceName, data) {
+            const canvas = document.getElementById(`trend-${serviceName}`);
+            if (!canvas) return;
+
+            if (trendCharts[serviceName]) trendCharts[serviceName].destroy();
+
+            const labels = data.map(d => {
+                const dt = new Date(d.timestamp);
+                return dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            });
+
+            trendCharts[serviceName] = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [
+                        {
+                            label: 'Req/s',
+                            data: data.map(d => d.request_rate),
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59,130,246,0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            yAxisID: 'y',
+                        },
+                        {
+                            label: 'P95 Latency',
+                            data: data.map(d => d.latency_p95 * 1000),
+                            borderColor: '#8b5cf6',
+                            borderWidth: 2,
+                            borderDash: [5, 5],
+                            pointRadius: 0,
+                            tension: 0.4,
+                            yAxisID: 'y1',
+                        },
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            labels: { color: '#94a3b8', font: { size: 10 }, boxWidth: 12 },
+                        },
+                    },
+                    scales: {
+                        x: {
+                            display: true,
+                            ticks: { color: '#64748b', font: { size: 9 }, maxTicksLimit: 6 },
+                            grid: { color: 'rgba(255,255,255,0.03)' },
+                        },
+                        y: {
+                            display: true,
+                            position: 'left',
+                            ticks: { color: '#3b82f6', font: { size: 9 } },
+                            grid: { color: 'rgba(255,255,255,0.03)' },
+                        },
+                        y1: {
+                            display: true,
+                            position: 'right',
+                            ticks: { color: '#8b5cf6', font: { size: 9 }, callback: v => v + 'ms' },
+                            grid: { drawOnChartArea: false },
+                        },
+                    },
+                }
+            });
+        }
+
+        function updateMetricValues(serviceName, latest) {
+            const set = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = val;
+            };
+            set(`metric-rr-${serviceName}`, latest.request_rate?.toFixed(1) ?? '—');
+            set(`metric-er-${serviceName}`, ((latest.error_rate ?? 0) * 100).toFixed(2) + '%');
+            set(`metric-lat-${serviceName}`, (latest.latency_p95 * 1000).toFixed(0) + 'ms');
+            set(`metric-cpu-${serviceName}`, latest.cpu_usage?.toFixed(1) + '%' ?? '—');
+        }
+
+        // ── Anomaly View ──────────────────────
+        async function loadAnomalies() {
+            const anomalies = await fetchJSON(`${API_BASE}/health/anomalies?limit=50`);
+            const loading = document.getElementById('anomaly-loading');
+            const list = document.getElementById('anomaly-list');
+            const empty = document.getElementById('anomaly-empty');
+
+            loading.style.display = 'none';
+
+            if (!anomalies || anomalies.length === 0) {
+                list.style.display = 'none';
+                empty.style.display = 'block';
+                document.getElementById('stat-anomalies').textContent = '0';
+                return;
+            }
+
+            empty.style.display = 'none';
+            list.style.display = 'flex';
+            list.innerHTML = '';
+            document.getElementById('stat-anomalies').textContent = anomalies.length;
+
+            for (const a of anomalies) {
+                list.appendChild(createAnomalyItem(a));
+            }
+        }
+
+        function createAnomalyItem(a) {
+            const item = document.createElement('div');
+            item.className = `anomaly-item severity-${a.severity}`;
+
+            let tags = [];
+            try { tags = JSON.parse(a.affected_metrics || '[]'); } catch {}
+
+            item.innerHTML = `
+                <div class="severity-dot"></div>
+                <div class="anomaly-content">
+                    <div class="anomaly-header">
+                        <h4>${a.service_name}</h4>
+                        <span class="severity-badge">${a.severity}</span>
+                    </div>
+                    <p class="anomaly-desc">${a.description || 'Anomaly detected'}</p>
+                    <div class="metric-tags">
+                        ${tags.map(t => `<span class="metric-tag">${t}</span>`).join('')}
+                    </div>
+                    <div class="anomaly-meta mono">
+                        Score: ${a.anomaly_score?.toFixed(3) ?? '—'} · ${new Date(a.timestamp).toLocaleString()}
+                    </div>
+                </div>
+            `;
+            return item;
+        }
+
+        // ── Refresh ────────────────────────────
+        async function refreshAll() {
+            const btn = document.getElementById('btn-refresh');
+            btn.textContent = '⟳ Loading…';
+            btn.disabled = true;
+
+            await Promise.all([loadHealth(), loadAnomalies()]);
+
+            btn.textContent = '⟳ Refresh';
+            btn.disabled = false;
+        }
+
+        // ── Init ───────────────────────────────
+        document.addEventListener('DOMContentLoaded', () => {
+            refreshAll();
+            setInterval(refreshAll, AUTO_REFRESH_INTERVAL);
+        });
+    </script>
+</body>
+</html>

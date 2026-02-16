@@ -1,0 +1,398 @@
+# CloudWatch Observatory - Kubernetes Deployment Manifest
+# Deploy with: kubectl apply -f kubernetes/deployment.yaml
+# Verify with: kubectl get all -n cloudwatch-observatory
+
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudwatch-observatory
+  labels:
+    app: cloudwatch-observatory
+
+---
+# ServiceAccount for monitoring permissions
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cloudwatch-monitor
+  namespace: cloudwatch-observatory
+  labels:
+    app: cloudwatch-observatory
+
+---
+# ClusterRole - read access to cluster resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cloudwatch-monitor-role
+  labels:
+    app: cloudwatch-observatory
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "nodes", "namespaces", "endpoints", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cloudwatch-monitor-binding
+  labels:
+    app: cloudwatch-observatory
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cloudwatch-monitor-role
+subjects:
+  - kind: ServiceAccount
+    name: cloudwatch-monitor
+    namespace: cloudwatch-observatory
+
+---
+# PersistentVolumeClaim - Backend data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cloudwatch-data-pvc
+  namespace: cloudwatch-observatory
+  labels:
+    app: cloudwatch-observatory
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# PersistentVolumeClaim - Prometheus data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data-pvc
+  namespace: cloudwatch-observatory
+  labels:
+    app: cloudwatch-observatory
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# ConfigMap - Prometheus config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: cloudwatch-observatory
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      - job_name: 'cloudwatch-backend'
+        static_configs:
+          - targets: ['cloudwatch-backend-service:5000']
+
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+
+---
+# Backend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudwatch-backend
+  namespace: cloudwatch-observatory
+  labels:
+    app: cloudwatch-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cloudwatch-backend
+  template:
+    metadata:
+      labels:
+        app: cloudwatch-backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
+    spec:
+      serviceAccountName: cloudwatch-monitor
+      containers:
+        - name: backend
+          image: cloudwatch-observatory:latest
+          ports:
+            - containerPort: 5000
+          env:
+            - name: PROMETHEUS_URL
+              value: "http://prometheus-service:9090"
+            - name: FLASK_ENV
+              value: "production"
+            - name: DB_PATH
+              value: "/app/backend/data/monitoring.db"
+            - name: IN_CLUSTER_K8S
+              value: "true"
+          volumeMounts:
+            - name: data-volume
+              mountPath: /app/backend/data
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /api/services
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/services
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: cloudwatch-data-pvc
+
+---
+# Backend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloudwatch-backend-service
+  namespace: cloudwatch-observatory
+  labels:
+    app: cloudwatch-backend
+spec:
+  selector:
+    app: cloudwatch-backend
+  ports:
+    - port: 5000
+      targetPort: 5000
+      protocol: TCP
+  type: ClusterIP
+
+---
+# Frontend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudwatch-frontend
+  namespace: cloudwatch-observatory
+  labels:
+    app: cloudwatch-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cloudwatch-frontend
+  template:
+    metadata:
+      labels:
+        app: cloudwatch-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: frontend-files
+              mountPath: /usr/share/nginx/html
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /nginx-health
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 15
+      volumes:
+        - name: frontend-files
+          configMap:
+            name: frontend-files
+        - name: nginx-config
+          configMap:
+            name: nginx-config
+
+---
+# Frontend Service (LoadBalancer)
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloudwatch-frontend-service
+  namespace: cloudwatch-observatory
+  labels:
+    app: cloudwatch-frontend
+spec:
+  selector:
+    app: cloudwatch-frontend
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+  type: LoadBalancer
+
+---
+# Nginx ConfigMap for Frontend
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: cloudwatch-observatory
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+
+        location / {
+            root /usr/share/nginx/html;
+            index dashboard.html;
+            try_files $uri $uri/ /dashboard.html;
+        }
+
+        location /api {
+            proxy_pass http://cloudwatch-backend-service:5000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+
+        location /nginx-health {
+            access_log off;
+            return 200 "OK";
+            add_header Content-Type text/plain;
+        }
+    }
+
+---
+# Prometheus Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: cloudwatch-observatory
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:latest
+          ports:
+            - containerPort: 9090
+          args:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+          volumeMounts:
+            - name: prometheus-config
+              mountPath: /etc/prometheus
+            - name: prometheus-data
+              mountPath: /prometheus
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+      volumes:
+        - name: prometheus-config
+          configMap:
+            name: prometheus-config
+        - name: prometheus-data
+          persistentVolumeClaim:
+            claimName: prometheus-data-pvc
+
+---
+# Prometheus Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-service
+  namespace: cloudwatch-observatory
+  labels:
+    app: prometheus
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+      protocol: TCP
+  type: ClusterIP
+
+---
+# HorizontalPodAutoscaler for Backend
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cloudwatch-backend-hpa
+  namespace: cloudwatch-observatory
+  labels:
+    app: cloudwatch-backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cloudwatch-backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

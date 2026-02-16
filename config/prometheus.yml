@@ -1,0 +1,35 @@
+# Prometheus Configuration for CloudWatch Observatory
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # CloudWatch Observatory Backend
+  - job_name: 'cloudwatch-backend'
+    static_configs:
+      - targets: ['monitoring-backend:5000']
+    metrics_path: /metrics
+
+  # Node Exporter - Host machine metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # cAdvisor - Container metrics
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+
+  # Kubernetes pods (when running in K8s)
+  # Uncomment below if deploying to Kubernetes with service discovery
+  # - job_name: 'kubernetes-pods'
+  #   kubernetes_sd_configs:
+  #     - role: pod
+  #   relabel_configs:
+  #     - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+  #       action: keep
+  #       regex: true
+  #     - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+  #       action: replace
+  #       target_label: __metrics_path__
+  #       regex: (.+)
